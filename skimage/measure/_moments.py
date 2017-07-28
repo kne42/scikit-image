@@ -1,11 +1,12 @@
 # coding: utf-8
 import numpy as np
+from .._shared.utils import assert_nD
 from . import _moments_cy
 import itertools
 from warnings import warn
 
 
-def moments(image, order=3):
+def moments(image, order=3, contour=False):
     """Calculate all raw image moments up to a certain order.
 
     The following properties can be calculated from raw image moments:
@@ -48,10 +49,20 @@ def moments(image, order=3):
     >>> cr, cc
     (14.5, 14.5)
     """
-    return moments_central(image, (0,) * image.ndim, order=order)
+    if type(image) is tuple:
+        if not contour:
+            raise TypeError("image: expected ndarray; received tuple")
+        image = np.rollaxis(np.asarray(image), axis=1)
+    ndim = image.ndim
+    if contour:
+        assert_nD(image, 2)
+        ndim = image.shape[1]
+    return moments_central(image, (0,) * ndim, order=order,
+                           contour=contour)
 
 
-def moments_central(image, center=None, cc=None, order=3, **kwargs):
+def moments_central(image, center=None, cc=None, order=3, contour=False,
+                    **kwargs):
     """Calculate all central image moments up to a certain order.
 
     The center coordinates (cr, cc) can be calculated from the raw moments as:
@@ -106,6 +117,14 @@ def moments_central(image, center=None, cc=None, order=3, **kwargs):
            [ 20.,   0.,  25.,   0.],
            [  0.,   0.,   0.,   0.]])
     """
+    if type(image) is tuple:
+        if not contour:
+            raise TypeError("image: expected ndarray; received tuple")
+        image = np.rollaxis(np.asarray(image), axis=1)
+    ndim = image.ndim
+    if contour:
+        assert_nD(image, 2)
+        ndim = image.shape[1]
     if cc is not None:  # using deprecated interface
         message = ('Using deprecated 2D-only, xy-coordinate interface to '
                    'moments_central. This interface will be removed in '
@@ -116,17 +135,32 @@ def moments_central(image, center=None, cc=None, order=3, **kwargs):
             center = (kwargs['cr'], cc)
         else:
             center = (center, cc)
-        return moments_central(image, center=center, order=order).T
+        return moments_central(image, center=center, order=order,
+                               contour=contour).T
     if center is None:
-        M = moments_central(image, center=(0,) * image.ndim, order=order)
-        center = M[tuple(np.eye(image.ndim, dtype=int))]
+        M = moments_central(image, center=(0,) * ndim, order=order)
+        center = M[tuple(np.eye(ndim, dtype=int))]
     calc = image.astype(float)
-    for dim, dim_length in enumerate(image.shape):
-        delta = np.arange(dim_length, dtype=float) - center[dim]
-        powers_of_delta = delta[:, np.newaxis] ** np.arange(order + 1)
-        calc = np.rollaxis(calc, dim, image.ndim)
-        calc = np.dot(calc, powers_of_delta)
-        calc = np.rollaxis(calc, -1, dim)
+    if contour:
+        calc -= center
+        calc = calc[..., np.newaxis] ** np.arange(order + 1)
+        # for a contour of shape (N, D), the following
+        # produces an N x D**2 calculation of moments
+        # for the points, then sums along axis 0
+        calc = np.einsum(('i...,'*ndim)[:-1],
+                         (*
+                         [calc[:, i::ndim].squeeze()\
+                         [..., (*([np.newaxis]*i + [slice(None)]
+                         + [np.newaxis]*(ndim-i-1)))]\
+                         for i in range(ndim)]
+                         ))
+    else:
+        for dim, dim_length in enumerate(image.shape):
+            delta = np.arange(dim_length, dtype=float) - center[dim]
+            powers_of_delta = delta[:, np.newaxis] ** np.arange(moments + 1)
+            calc = np.rollaxis(calc, dim, image.ndim)
+            calc = np.dot(calc, powers_of_delta)
+            calc = np.rollaxis(calc, -1, dim)
     return calc
 
 
